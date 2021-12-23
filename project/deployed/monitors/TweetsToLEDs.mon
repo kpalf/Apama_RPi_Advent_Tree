@@ -1,0 +1,84 @@
+
+package com.apamax.twitter;
+
+using com.softwareag.connectivity.ConnectivityPlugins;
+
+/** This monitor is responsible for ...  */
+
+monitor TwitterStream {
+	// Twitter stream params
+	string BEARER_TOKEN := "AAAAAAAAAAAAAAAAAAAAAMgoWwEAAAAAb7edlDbBTT%2F5ik%2FzNxZrD0ERzo8%3DLx6DoZZoNW0JhkUtT5FUVE9eLvVF0yNMIrvPX4qOhzNxjBiCTZ";
+	string path := "/2/tweets/search/stream";
+	dictionary<string, any> params := {"tweet.fields":"text,author_id"};
+	
+	// GPIO params
+	integer starPin := 2;
+	sequence<integer> treePins := [4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22,2];
+	sequence<context> cs := [new context, new context, new context, new context, new context, new context, new context, new context];
+	
+	action playMsg (com.apamax.rpi.gpio.LED led, string msg) {
+		led.convertToMorseCode(msg);
+	}
+	
+	action onload() {
+		
+		monitor.subscribe("twitter");
+		
+		// Initialize GPIO
+		com.apamax.rpi.gpio.Setup setup := com.apamax.rpi.gpio.Setup(new sequence<integer>, new sequence<integer>);
+		setup := setup.setOutputPins(treePins);
+		setup.init();
+		
+		// Initialize leds
+		sequence<com.apamax.rpi.gpio.LED> leds := new sequence<com.apamax.rpi.gpio.LED>;
+		sequence<boolean> ledBusy := new sequence<boolean>;
+		integer p;
+		for p in treePins {
+			com.apamax.rpi.gpio.LED led := new com.apamax.rpi.gpio.LED;
+			led := led.init(p, false);
+			leds.append(led);
+		}
+		com.apamax.rpi.gpio.LED star := new com.apamax.rpi.gpio.LED;
+		star := star.init(starPin, true);
+		leds.append(star);
+		
+		// Send Request
+		TweetRequest tr := new TweetRequest;
+		tr.bearerToken := BEARER_TOKEN;
+		tr.path := path;
+		tr.params := params; 
+		tr.id := integer.incrementCounter("HTTPClient.requestId");
+		send tr to "httpRequest";
+		
+		integer contextCounter := 0;
+		integer ledCounter := 0;
+		
+		
+
+		// Process Response Stream
+		on all Tweet() as t {
+			log "Got a tweet" at INFO;
+			// strip special chars from text
+			string sanitized := t.body.replace("(!g)[^A-Za-z0-9]", "");
+			// send message to led
+			spawn playMsg(leds[ledCounter], sanitized) to cs[contextCounter];
+			// increment counters
+			ledCounter := ledCounter + 1;
+			contextCounter := contextCounter + 1;
+			if ledCounter > 23 {
+				ledCounter := 0;
+			}
+			if contextCounter > 7 {
+				contextCounter := 0;
+			}
+		}
+		
+		on all HTTPError() {
+			log "HTTP Error" at WARN;
+		}
+		
+		
+		log "Loaded monitor TweetsToLEDs" at INFO;
+		
+	}
+}
