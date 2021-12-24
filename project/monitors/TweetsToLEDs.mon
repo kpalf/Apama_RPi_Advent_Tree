@@ -9,7 +9,7 @@ using com.softwareag.connectivity.ConnectivityPlugins;
 monitor TwitterStream {
 	// Twitter stream params
 	float initMins := 1.0;
-	string BEARER_TOKEN := "Bearer AAAAAAAAAAAAAAAAAAAAAMgoWwEAAAAAb7edlDbBTT%2F5ik%2FzNxZrD0ERzo8%3DLx6DoZZoNW0JhkUtT5FUVE9eLvVF0yNMIrvPX4qOhzNxjBiCTZ";
+	string BEARER_TOKEN := "";
 	string path := "/2/tweets/search/recent";
 	string date := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"yyyy-MM-dd");
 	string time := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"HH:mm:ss.SSS");
