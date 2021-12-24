@@ -7,10 +7,13 @@ event TweetRequest {
 	string path;
 	dictionary<string, any> params;
 }
-event Tweet {
-	string author;
-	string body;
+
+event TweetQueryResult {
+	sequence<dictionary<string, string>> results;
+	dictionary<string, string> meta;
 }
+
 event HTTPError {
 	integer statusCode;
+	string message;
 }

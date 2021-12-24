@@ -1,0 +1,137 @@
+
+package com.apamax.twitter;
+
+using com.softwareag.connectivity.ConnectivityPlugins;
+
+
+/** This monitor is responsible for ...  */
+
+monitor TwitterStream {
+	// Twitter stream params
+	float initMins := 1.0;
+	string BEARER_TOKEN := "Bearer AAAAAAAAAAAAAAAAAAAAAMgoWwEAAAAAb7edlDbBTT%2F5ik%2FzNxZrD0ERzo8%3DLx6DoZZoNW0JhkUtT5FUVE9eLvVF0yNMIrvPX4qOhzNxjBiCTZ";
+	string path := "/2/tweets/search/recent";
+	string date := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"yyyy-MM-dd");
+	string time := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"HH:mm:ss.SSS");
+	dictionary<string, any> initParams := {
+		"query": "christmas",
+		"start_time": date + "T" + time + "Z",
+		"tweet.fields": "id"
+	};
+	dictionary<string, any> params := {
+		"query": "christmas",
+		"since_id": 1,
+		"tweet.fields":"text,id"
+	};
+	string sinceId := "0";
+	float requestInterval := 100.0;
+	
+	// GPIO params
+	integer starPin := 2;
+	sequence<integer> treePins := [4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22,2];
+	
+	// Context setup
+	integer nContexts := 8;
+	sequence<context> cs;
+
+	action playMsg (com.apamax.rpi.gpio.LED led, string msg) {
+		led.convertToMorseCode(msg);
+	}
+	
+	action sendRequest(TweetRequest tr) {
+		send tr to "httpRequest";
+	}
+	
+	action onload() {
+		
+		monitor.subscribe("twitter");
+		monitor.subscribe("httperrors");
+		
+		// Initialize contexts
+		while nContexts > 0 {
+			cs.append(context(nContexts.toString()));
+			nContexts := nContexts - 1;
+		}
+		
+		// Initialize GPIO
+		com.apamax.rpi.gpio.Setup setup := com.apamax.rpi.gpio.Setup(new sequence<integer>, new sequence<integer>);
+		setup := setup.setOutputPins(treePins);
+		setup.init();
+		
+		// Initialize leds
+		sequence<com.apamax.rpi.gpio.LED> leds := new sequence<com.apamax.rpi.gpio.LED>;
+		sequence<boolean> ledBusy := new sequence<boolean>;
+		integer p;
+		for p in treePins {
+			com.apamax.rpi.gpio.LED led := new com.apamax.rpi.gpio.LED;
+			led := led.init(p, false);
+			leds.append(led);
+		}
+		com.apamax.rpi.gpio.LED star := new com.apamax.rpi.gpio.LED;
+		star := star.init(starPin, true);
+		leds.append(star);
+		
+		// Initialize counters
+		integer contextCounter := 0;
+		integer ledCounter := 0;
+		
+		// Send Initial Request
+		TweetRequest tr := new TweetRequest;
+		tr.bearerToken := BEARER_TOKEN;
+		tr.path := path;
+		tr.params := initParams; 
+		tr.id := 1;
+		sendRequest(tr);
+
+		// Process first result (deals with no tweets returned)
+		on TweetQueryResult() as qr {
+			try {
+				log qr.results.toString() at INFO;
+				sinceId := qr.results[qr.results.size() - 1].getOrDefault("id");
+				tr.params := params;
+				params["since_id"] := sinceId;
+			
+			} catch(com.apama.exceptions.Exception e) {
+				log "No matching tweets in last minute, unable to fetch valid starting ID" at WARN;
+			}
+			tr.id := integer.incrementCounter("HTTPClient.requestId");
+		}
+		
+		on all wait(60.0) sendRequest(tr);
+		
+		on all TweetQueryResult() as t {
+			log "Got tweets!" at INFO;
+			dictionary<string, string> tweet := {};
+			for tweet in t.results {
+				string msg := tweet.getOrDefault("text");
+				sinceId := tweet.getOrDefault("id");
+				log msg at INFO;
+				// Strip special chars
+				string sanitized := msg.replace("(!g)[^A-Za-z0-9]", "");
+				// Send message to LED
+				spawn playMsg(leds[ledCounter], sanitized) to cs[contextCounter];
+				// Increment counters
+				ledCounter := ledCounter + 1;
+				contextCounter := contextCounter + 1;
+				if ledCounter > 23 {
+					ledCounter := 0;
+				}
+				if contextCounter > 7 {
+					contextCounter := 0;
+				}
+			}
+			tr.params["since_id"] := sinceId;
+		}
+
+		
+		on all HTTPError() as err {
+			log "HTTP Error" at WARN;
+			log err.statusCode.toString() at WARN;
+			log err.message at WARN;
+		}
+		
+		
+		log "Loaded monitor TweetsToLEDs" at INFO;
+		
+	}
+}

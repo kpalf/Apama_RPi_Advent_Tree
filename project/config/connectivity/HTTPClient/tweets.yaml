@@ -22,12 +22,11 @@ startChains:
               - metadata.http.headers.Authorization: payload.bearerToken
             defaultValue:
               - metadata.http.method: GET
-              - metadata.requestId: 12345
-        com.apamax.twitter.Tweet:
+        com.apamax.twitter.TweetQueryResult:
           towardsHost:
             mapFrom:
-              - payload.body: payload.data.text
-              - payload.author: payload.data.author_id
+              - payload.results: payload.data
+              - payload.meta: payload.meta
             defaultValue:
               - metadata.sag.channel: twitter
         com.apamax.twitter.HTTPError:
@@ -40,12 +39,14 @@ startChains:
 
     - classifierCodec:
         rules:
-          - com.apamax.twitter.Tweet:
+          - com.apamax.twitter.TweetQueryResult:
               - metadata.http.statusCode: 200
+              - payload.data:
           - com.apamax.twitter.HTTPError:
               - metadata.http.statusCode:
 
     - jsonCodec:
+
     - stringCodec:
     - httpClient:
         host: api.twitter.com
