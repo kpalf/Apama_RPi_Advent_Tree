@@ -113,8 +113,8 @@ monitor TwitterStream {
 				string msg := tweet.getOrDefault("text");
 				sinceId := tweet.getOrDefault("id");
 				log msg at INFO;
-				// Strip special chars
-				string sanitized := msg.replace("(!g)[^A-Za-z0-9]", "");
+				// Strip special chars and numbers
+				string sanitized := msg.replace("(!g)[^A-Za-z]", "");
 				// Send message to LED
 				spawn playMsg(leds[ledCounter], sanitized) to contextsSeq[contextCounter];
 
