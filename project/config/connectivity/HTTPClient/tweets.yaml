@@ -1,0 +1,53 @@
+connectivityPlugins:
+  httpClient:
+    libraryName: connectivity-http-client
+    class: HTTPClient
+
+
+startChains:
+
+  httpTwitter:
+    - apama.eventMap:
+        subscribeChannels:
+          - httpRequest
+        allowMissing: true
+
+    - mapperCodec:
+        com.apamax.twitter.TweetRequest:
+          towardsTransport:
+            mapFrom:
+              - metadata.requestId: payload.id
+              - metadata.http.path: payload.path
+              - metadata.http.queryString : payload.params
+              - metadata.http.headers.Authorization: payload.bearerToken
+            defaultValue:
+              - metadata.http.method: GET
+        com.apamax.twitter.TweetQueryResult:
+          towardsHost:
+            mapFrom:
+              - payload.results: payload.data
+              - payload.meta: payload.meta
+            defaultValue:
+              - metadata.sag.channel: twitter
+        com.apamax.twitter.HTTPError:
+          towardsHost:
+            mapFrom:
+              - payload.code: metadata.http.statusCode
+              - payload.message: metadata.http.statusReason
+            defaultValue:
+              - metadata.sag.channel: httperrors
+
+    - classifierCodec:
+        rules:
+          - com.apamax.twitter.TweetQueryResult:
+              - metadata.http.statusCode: 200
+              - payload.data:
+          - com.apamax.twitter.HTTPError:
+              - metadata.http.statusCode:
+
+    - jsonCodec:
+
+    - stringCodec:
+    - httpClient:
+        host: api.twitter.com
+        tls: true

@@ -1,0 +1,19 @@
+package com.apamax.twitter;
+
+/** This event is ...  */
+event TweetRequest {
+	integer id;
+	string bearerToken;
+	string path;
+	dictionary<string, any> params;
+}
+
+event TweetQueryResult {
+	sequence<dictionary<string, string>> results;
+	dictionary<string, string> meta;
+}
+
+event HTTPError {
+	integer statusCode;
+	string message;
+}
