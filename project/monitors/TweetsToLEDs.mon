@@ -10,10 +10,12 @@ using com.softwareag.connectivity.ConnectivityPlugins;
  * https://thepihut.com/products/3d-xmas-tree-for-raspberry-pi
  */
 
+
 monitor TwitterStream {
 	// Twitter stream params
 	float initMins := 1.0;
 	string BEARER_TOKEN := "Bearer <your-token>";
+
 	string path := "/2/tweets/search/recent";
 	string date := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"yyyy-MM-dd");
 	string time := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"HH:mm:ss.SSS");
@@ -35,6 +37,7 @@ monitor TwitterStream {
 	sequence<integer> treePins := [4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22,2];
 	
 	// Context setup
+
 	integer nContexts := 20;
 	sequence<context> contextsSeq;
 
@@ -114,6 +117,7 @@ monitor TwitterStream {
 				string sanitized := msg.replace("(!g)[^A-Za-z0-9]", "");
 				// Send message to LED
 				spawn playMsg(leds[ledCounter], sanitized) to contextsSeq[contextCounter];
+
 				// Increment counters
 				ledCounter := ledCounter + 1;
 				contextCounter := contextCounter + 1;
