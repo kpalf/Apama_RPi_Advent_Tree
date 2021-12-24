@@ -255,7 +255,7 @@ event MorseCode	{
 			if (morseCharRep!= ""){
 				integer y := 0;
 				while (y < morseCharRep.length()){
-					//call morseDash or moseDash
+					//call morseDash or morseDot 
 					string singleMorseElement := morseCharRep.substring(y, y+1);
 					if (singleMorseElement != ""){
 						if (singleMorseElement = "."){
@@ -336,7 +336,7 @@ event LED {
 	* @param morseStr The String to convert into MorseCode.
 	*/
 	action convertToMorseCode(string morseStr){
-		MorseCode.convertToMorseCode(morseStr, __pin, 100);
+		MorseCode.convertToMorseCode(morseStr, __pin, 500);
 	}
 
 	/*
