@@ -4,12 +4,18 @@ package com.apamax.twitter;
 using com.softwareag.connectivity.ConnectivityPlugins;
 
 
-/** This monitor is responsible for ...  */
+/** This monitor is responsible for batch processing 
+ * Tweets and playing them as morse code on a Pi Hut
+ * 3D Christmas Tree 
+ * https://thepihut.com/products/3d-xmas-tree-for-raspberry-pi
+ */
+
 
 monitor TwitterStream {
 	// Twitter stream params
 	float initMins := 1.0;
-	string BEARER_TOKEN := "";
+	string BEARER_TOKEN := "Bearer <your-token>";
+
 	string path := "/2/tweets/search/recent";
 	string date := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"yyyy-MM-dd");
 	string time := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"HH:mm:ss.SSS");
@@ -31,8 +37,9 @@ monitor TwitterStream {
 	sequence<integer> treePins := [4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22,2];
 	
 	// Context setup
-	integer nContexts := 8;
-	sequence<context> cs;
+
+	integer nContexts := 20;
+	sequence<context> contextsSeq;
 
 	action playMsg (com.apamax.rpi.gpio.LED led, string msg) {
 		led.convertToMorseCode(msg);
@@ -49,7 +56,7 @@ monitor TwitterStream {
 		
 		// Initialize contexts
 		while nContexts > 0 {
-			cs.append(context(nContexts.toString()));
+			contextsSeq.append(context(nContexts.toString()));
 			nContexts := nContexts - 1;
 		}
 		
@@ -109,7 +116,8 @@ monitor TwitterStream {
 				// Strip special chars
 				string sanitized := msg.replace("(!g)[^A-Za-z0-9]", "");
 				// Send message to LED
-				spawn playMsg(leds[ledCounter], sanitized) to cs[contextCounter];
+				spawn playMsg(leds[ledCounter], sanitized) to contextsSeq[contextCounter];
+
 				// Increment counters
 				ledCounter := ledCounter + 1;
 				contextCounter := contextCounter + 1;

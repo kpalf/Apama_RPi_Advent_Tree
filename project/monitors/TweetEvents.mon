@@ -1,6 +1,7 @@
 package com.apamax.twitter;
 
-/** This event is ...  */
+/** Event for making requests to the Twitter API  */
+
 event TweetRequest {
 	integer id;
 	string bearerToken;
@@ -8,10 +9,14 @@ event TweetRequest {
 	dictionary<string, any> params;
 }
 
+/** Event for handling response from Twitter API */
+
 event TweetQueryResult {
 	sequence<dictionary<string, string>> results;
 	dictionary<string, string> meta;
 }
+
+/** Event for handling http errors */
 
 event HTTPError {
 	integer statusCode;
