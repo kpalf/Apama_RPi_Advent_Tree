@@ -124,7 +124,7 @@ monitor TwitterStream {
 				if ledCounter > 23 {
 					ledCounter := 0;
 				}
-				if contextCounter > 7 {
+				if contextCounter = contextsSeq.size()  {
 					contextCounter := 0;
 				}
 			}
