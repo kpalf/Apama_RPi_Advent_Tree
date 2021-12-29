@@ -1,0 +1,90 @@
+package kpalf.demo.rpi.gpiotree;
+
+using com.apama.exceptions.Exception;
+
+
+/** Intances of this event MUST only be used when returned from @see SimpleGPIOTree#init().
+*/
+event SimpleGPIOTreeLED {
+	integer pinId;
+	
+	/** @private */
+	import "GPIOPlugin" as GPIOPlugin;
+
+	/** Set the LED to on.
+	 */
+	action setOn() { GPIOPlugin.write(pinId, true); }
+
+	/** Set the LED to off.
+	 */
+	action setOff() { GPIOPlugin.write(pinId, false); }
+
+	/** Determine if the LED is currently on.
+	 * @returns The state of the LED.
+	 */
+	action isOn() returns boolean { return GPIOPlugin.read(pinId); }
+	
+} // event SimpleGPIOTreeLED
+
+
+/** This utility event is responsible for simplistic control of an LED Christmas Tree HAT for the Raspberry Pi.
+ * The HAT has zero inputs, and 25 output LEDs.  These are 24 red LEDs and a single white LED for the star on top.
+ * The red 24 LED's are on pins 4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22.
+ * The white 'star' LED in on pin 2.
+*/
+event SimpleGPIOTree {
+
+	/** @private */
+	import "GPIOPlugin" as GPIOPlugin;
+	
+	/** @private */
+	
+	/** This init() action must be called before any other actions in order to initialise the GPIO plugin.
+	* @returns A sequence of SimpleGPIOTreeLED events, with the first element being the white star.
+	* @throws An exception is thrown in GPIO setup fails.
+	*/
+	static action init() returns sequence< SimpleGPIOTreeLED > {
+		// GPIO params
+		integer starPin := 2;
+		sequence<integer> treeOutPins := [2, 4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22];
+		sequence<integer> dummyInPins := [];
+
+		log "SimpleGPIOTree.init() - calling GPIOPlugin.setup()..." at INFO;
+		integer setupReturnCode := GPIOPlugin.setup(dummyInPins, treeOutPins);
+		if (0 != setupReturnCode) then {
+			string msg := "GPIOPlugin setup failed with non-zero return code "+setupReturnCode.toString();
+			log "SimpleGPIOTree.init() - "+msg at ERROR;
+			throw Exception(msg, "com.apama.exceptions.PluginException");
+		}
+		
+		sequence< SimpleGPIOTreeLED > leds := new sequence< SimpleGPIOTreeLED >;
+		integer ledIndex;
+		for ledIndex in treeOutPins {
+			leds.append( SimpleGPIOTreeLED( treeOutPins[ledIndex] ) );
+		}
+		
+		return leds;
+	} // init()
+	
+	
+	/** Passing in a sequence created by @see SimpleGPIOTree#init(), turn every LED on.
+	*/
+	static action allOn( sequence< SimpleGPIOTreeLED > leds ) {
+		SimpleGPIOTreeLED led;
+		for led in leds {
+			led.setOn();
+		}
+	}
+	
+	/** Passing in a sequence created by @see SimpleGPIOTree#init(), turn every LED off.
+	*/
+	static action allOff( sequence< SimpleGPIOTreeLED > leds ) {
+		SimpleGPIOTreeLED led;
+		for led in leds {
+			led.setOff();
+		}
+	}
+	
+	
+} // event SimpleGPIOTree
+
