@@ -58,9 +58,9 @@ event SimpleGPIOTree {
 		}
 		
 		sequence< SimpleGPIOTreeLED > leds := new sequence< SimpleGPIOTreeLED >;
-		integer ledIndex;
-		for ledIndex in treeOutPins {
-			leds.append( SimpleGPIOTreeLED( treeOutPins[ledIndex] ) );
+		integer ledPinId;
+		for ledPinId in treeOutPins {
+			leds.append( SimpleGPIOTreeLED( ledPinId ) );
 		}
 		
 		return leds;
