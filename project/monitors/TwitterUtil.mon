@@ -1,0 +1,100 @@
+package com.apamax.twitter;
+
+/** This event is ...  */
+event TwitterUtil {
+	
+	/** Name of the OS environment valiable that should contain the users bearer token for the Twitter API. */
+	constant string TWITTER_BEARER_TOKEN_ENV_VAR := "BEARER_TOKEN";
+	/** Name of the channel to which a monitor must subscribe for positive responses to HTTP requests. */
+	constant string CHANNEL_HTTPCLIENT_REQUEST := "httpRequest";
+	/** Name of the channel to which a monitor must subscribe for error responses to HTTP requests. */
+	constant string CHANNEL_HTTPCLIENT_ERRORS := "httperrors";
+	
+	/** Maximum number of results to be returned per page of results. Range 10-100, default 24. */
+	constant integer TWITTER_MAX_RESULTS_PER_REQUEST := 24; // Permitted range is 10 to 100. Default if not used would be 10.
+	/** @private Path in Twitter API v2. For docs @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/api-reference/get-tweets-search-recent */
+	constant string TWITTER_PATH_RECENT_TWEETS := "/2/tweets/search/recent";
+	/** @private Name of the counter used for internal unique IDs for HTTP requests. */
+	constant string COUNTER_HTTPCLIENT := "HTTPClient.requestId";
+	
+	/** Make a request to the Twitter recent search API, using the supplied bearer token and query.
+	* One of the two callback actions will be invoked due to either a successful result or an error.
+	* A successful response also contains metadata specifying the ID of the more recent tweet in that 
+	* response, the value for which can be supplied in the next invocation of this action to avoid duplicates. 
+	*
+	* Before first use of this action ensure the monitor is subscribed to the necessary channels to see responses from the HTTP connectivity chain - @see subscribeToResponseChannels().
+	*
+	* @param twitterAuthBearerToken 
+	* @param twitterQuery example "(covid OR coronavirus) UK -is:retweet lang:en" - @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/integrate/build-a-query
+	* @param callback_onTweetsResponse This callback action is invoked for successful responses.
+	* @param callback_onTweetsHttpError This callback action is invoked for error responses.
+	* @param optionalSinceLastSeenId Optional ID of most recent tweet in a previous response such that any new response must only contain later (more recent) tweets.
+	*/
+	action getRecentTweets( string twitterAuthBearerToken, string twitterQuery, action< TweetQueryResult > callback_onTweetsResponse, action<> callback_onTweetsHttpError, optional< string > optionalSinceLastSeenId ) {
+	
+		on TweetQueryResult()  as tweetQueryResult and not HTTPError() {
+			// got a valid response
+			log "getRecentTweets() - got TweetQueryResult" at DEBUG;
+			callback_onTweetsResponse( tweetQueryResult );
+		}
+		on HTTPError() as httpError and not TweetQueryResult() {
+			// got an error
+			log "getRecentTweets() - got HTTPError" at DEBUG;
+			callback_onTweetsHttpError();
+		}
+	
+		
+		// build the request to the Twitter HTTP v2 API
+		dictionary<string, any> params := {
+			"query": twitterQuery,
+			//"since_id": sinceId,
+			"max_results": TWITTER_MAX_RESULTS_PER_REQUEST,
+			"tweet.fields":"text,id,created_at" // In the responses to regular requests we want both the textual content and the ID of each tweet
+		};
+		ifpresent optionalSinceLastSeenId {
+			params.add( "since_id", optionalSinceLastSeenId );
+		}
+		log "doRegularTwitterRequest() - params="+params.toString() at DEBUG;
+		
+		TweetRequest tr := new TweetRequest;
+		tr.bearerToken := "Bearer "+twitterAuthBearerToken;
+		tr.path := TWITTER_PATH_RECENT_TWEETS;
+		tr.params := params; 
+		tr.id := integer.incrementCounter(COUNTER_HTTPCLIENT);
+		
+		// send the HTTP request
+		send tr to CHANNEL_HTTPCLIENT_REQUEST;
+	
+	} // getRecentTweets()
+	
+
+	/** Utility to sucbscribe to the necessary channels for receiving responses and errors - should be used one before the first call to @see getRecentTweets().
+	*/
+	action subscribeToResponseChannels() {
+		monitor.subscribe(CHANNEL_HTTPCLIENT_REQUEST);
+		monitor.subscribe(CHANNEL_HTTPCLIENT_ERRORS);
+	}
+	
+	
+	/** Utility method to get the value of the Twitter API authentication Bearer Token from the process environment variables.
+	* @returns the value found in the environment, or empty string if not found.
+	*/
+	action discoverTwitterBearerToken() returns string {
+		log "discoverTwitterBearerToken()" at DEBUG;
+		
+		dictionary<string, string> envVars := com.apama.correlator.Component.getInfo("envp");
+		
+		string token := envVars.getOrDefault(TWITTER_BEARER_TOKEN_ENV_VAR);
+		if (""=token or token.length() <4) {
+			log "discoverTwitterBearerToken() - Could not find valid environment variable named "+TWITTER_BEARER_TOKEN_ENV_VAR+". Exiting monitor." at ERROR;
+			//die;
+		}
+		else {
+			log "discoverTwitterBearerToken() - Found environment variable named "+TWITTER_BEARER_TOKEN_ENV_VAR+" with value ending: \""+token.substring(token.length()-4, token.length())+"\"" at DEBUG;
+		}
+		return token;
+		
+	} // discoverTwitterBearerToken()
+
+	
+} // event TwitterUtil
