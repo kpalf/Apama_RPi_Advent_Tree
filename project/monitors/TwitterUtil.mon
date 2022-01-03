@@ -26,11 +26,11 @@ event TwitterUtil {
 	*
 	* @param twitterAuthBearerToken 
 	* @param twitterQuery example "(covid OR coronavirus) UK -is:retweet lang:en" - @see https://developer.twitter.com/en/docs/twitter-api/tweets/search/integrate/build-a-query
-	* @param callback_onTweetsResponse This callback action is invoked for successful responses.
-	* @param callback_onTweetsHttpError This callback action is invoked for error responses.
-	* @param optionalSinceLastSeenId Optional ID of most recent tweet in a previous response such that any new response must only contain later (more recent) tweets.
+	* @param callback_onTweetsResponse This async callback action is invoked for successful responses.
+	* @param callback_onTweetsHttpError This async callback action is invoked for error responses.
+	* @param optionalSinceLastSeenId ID of most recent tweet in a previous response such that any new response must only contain later (more recent) tweets, or empty string if not known.
 	*/
-	action getRecentTweets( string twitterAuthBearerToken, string twitterQuery, action< TweetQueryResult > callback_onTweetsResponse, action<> callback_onTweetsHttpError, optional< string > optionalSinceLastSeenId ) {
+	static action getRecentTweets( string twitterAuthBearerToken, string twitterQuery, action< TweetQueryResult > callback_onTweetsResponse, action<> callback_onTweetsHttpError, string optionalSinceLastSeenId ) {
 	
 		on TweetQueryResult()  as tweetQueryResult and not HTTPError() {
 			// got a valid response
@@ -51,7 +51,7 @@ event TwitterUtil {
 			"max_results": TWITTER_MAX_RESULTS_PER_REQUEST,
 			"tweet.fields":"text,id,created_at" // In the responses to regular requests we want both the textual content and the ID of each tweet
 		};
-		ifpresent optionalSinceLastSeenId {
+		if (0!= optionalSinceLastSeenId.length()) {
 			params.add( "since_id", optionalSinceLastSeenId );
 		}
 		log "doRegularTwitterRequest() - params="+params.toString() at DEBUG;
@@ -70,7 +70,7 @@ event TwitterUtil {
 
 	/** Utility to sucbscribe to the necessary channels for receiving responses and errors - should be used one before the first call to @see getRecentTweets().
 	*/
-	action subscribeToResponseChannels() {
+	static action subscribeToResponseChannels() {
 		monitor.subscribe(CHANNEL_HTTPCLIENT_REQUEST);
 		monitor.subscribe(CHANNEL_HTTPCLIENT_ERRORS);
 	}
@@ -79,7 +79,7 @@ event TwitterUtil {
 	/** Utility method to get the value of the Twitter API authentication Bearer Token from the process environment variables.
 	* @returns the value found in the environment, or empty string if not found.
 	*/
-	action discoverTwitterBearerToken() returns string {
+	static action discoverTwitterBearerToken() returns string {
 		log "discoverTwitterBearerToken()" at DEBUG;
 		
 		dictionary<string, string> envVars := com.apama.correlator.Component.getInfo("envp");
