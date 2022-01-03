@@ -1,145 +1,193 @@
 
 package com.apamax.twitter;
 
+using com.apama.exceptions.Exception;
 using com.softwareag.connectivity.ConnectivityPlugins;
+using kpalf.demo.rpi.gpiotree.SimpleGPIOTree;
+using kpalf.demo.rpi.gpiotree.SimpleGPIOTreeLED;
+using kpalf.demo.morse.MorseCodeUtil;
 
 
-/** This monitor is responsible for batch processing 
- * Tweets and playing them as morse code on a Pi Hut
- * 3D Christmas Tree 
+
+/** This monitor is responsible for requesting small batches of Tweets and 
+* playing them as morse code on a Pi Hut 3D Christmas Tree.
+*
+* This is the "controller" in the project and makes use of separate utility 
+* events that each encapsulate logic for Morse encoding, communicating with Twitter, and GPIO for the LEDs.
+*
  * https://thepihut.com/products/3d-xmas-tree-for-raspberry-pi
  */
+monitor TweetsToLEDs {
 
-
-monitor TwitterStream {
-	// Twitter stream params
-	float initMins := 1.0;
-	string BEARER_TOKEN := "Bearer <your-token>";
-
-	string path := "/2/tweets/search/recent";
-	string date := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"yyyy-MM-dd");
-	string time := com.apama.correlator.timeformat.TimeFormat.format(currentTime - (initMins * 3600.0),"HH:mm:ss.SSS");
-	dictionary<string, any> initParams := {
-		"query": "christmas",
-		"start_time": date + "T" + time + "Z",
-		"tweet.fields": "id"
-	};
-	dictionary<string, any> params := {
-		"query": "christmas",
-		"since_id": 1,
-		"tweet.fields":"text,id"
-	};
-	string sinceId := "0";
-	float requestInterval := 100.0;
+	constant string TWITTER_QUERY := "(covid OR coronavirus) UK -is:retweet lang:en";
+	constant string INITIAL_AND_STARVATION_MSG := "Apama";
+	constant integer QUEUE_LOW_WATERMARK := 5;
 	
-	// GPIO params
-	integer starPin := 2;
-	sequence<integer> treePins := [4,15,13,21,25,8,5,10,16,17,27,26,24,9,12,6,20,19,14,18,11,7,23,22,2];
+	sequence< SimpleGPIOTreeLED > redLEDs;
+	SimpleGPIOTreeLED starLED;
+	string twitterAuthBearerToken;
+	string twitterLastSeenID :="";
+	sequence<string> queueOfTweets := [];
 	
-	// Context setup
-
-	integer nContexts := 20;
-	sequence<context> contextsSeq;
-
-	action playMsg (com.apamax.rpi.gpio.LED led, string msg) {
-		led.convertToMorseCode(msg);
+	
+	event InternalStatus {
+		integer totalTweetsReceived;
+		integer totalErrors;
 	}
+	InternalStatus status := new InternalStatus;
 	
-	action sendRequest(TweetRequest tr) {
-		send tr to "httpRequest";
-	}
 	
 	action onload() {
+		log "TweetsToLEDs.onload()" at INFO;
 		
-		monitor.subscribe("twitter");
-		monitor.subscribe("httperrors");
-		
-		// Initialize contexts
-		while nContexts > 0 {
-			contextsSeq.append(context(nContexts.toString()));
-			nContexts := nContexts - 1;
+		// Get the Twitter Auth "Bearer token"
+		twitterAuthBearerToken := TwitterUtil.discoverTwitterBearerToken();
+		if (0=twitterAuthBearerToken.length()) {
+			log "TweetsToLEDs.onload() - **** ERROR **** Please set an environment variable called "+TwitterUtil.TWITTER_BEARER_TOKEN_ENV_VAR+" with the value of your Twitter API bearer token. Exiting monitor." at ERROR;
+			die;
 		}
 		
-		// Initialize GPIO
-		com.apamax.rpi.gpio.Setup setup := com.apamax.rpi.gpio.Setup(new sequence<integer>, new sequence<integer>);
-		setup := setup.setOutputPins(treePins);
-		setup.init();
+		// Initialise the channels for Twitter API responses
+		TwitterUtil.subscribeToResponseChannels();
 		
-		// Initialize leds
-		sequence<com.apamax.rpi.gpio.LED> leds := new sequence<com.apamax.rpi.gpio.LED>;
-		sequence<boolean> ledBusy := new sequence<boolean>;
-		integer p;
-		for p in treePins {
-			com.apamax.rpi.gpio.LED led := new com.apamax.rpi.gpio.LED;
-			led := led.init(p, false);
-			leds.append(led);
+		// Initialise the GPIO Tree and and turn on the star LED
+		log "TweetsToLEDs.onload() - calling SimpleGPIOTree.init()";
+		sequence< SimpleGPIOTreeLED > allLEDs;
+		try {
+			allLEDs := SimpleGPIOTree.init();
 		}
-		com.apamax.rpi.gpio.LED star := new com.apamax.rpi.gpio.LED;
-		star := star.init(starPin, true);
-		leds.append(star);
-		
-		// Initialize counters
-		integer contextCounter := 0;
-		integer ledCounter := 0;
-		
-		// Send Initial Request
-		TweetRequest tr := new TweetRequest;
-		tr.bearerToken := BEARER_TOKEN;
-		tr.path := path;
-		tr.params := initParams; 
-		tr.id := 1;
-		sendRequest(tr);
+		catch (Exception e) {
+			log "TweetsToLEDs.onload() - **** ERROR **** Failed to initialise GPIO. Exiting monitor." at ERROR;
+			die;
+		}
+		starLED := allLEDs[0];
+		starLED.setOn(); // Turn the white "star" led on the top of the tree on permanently
+		allLEDs.remove(0);
+		redLEDs := allLEDs;
 
-		// Process first result (deals with no tweets returned)
-		on TweetQueryResult() as qr {
-			try {
-				log qr.results.toString() at INFO;
-				sinceId := qr.results[qr.results.size() - 1].getOrDefault("id");
-				tr.params := params;
-				params["since_id"] := sinceId;
-			
-			} catch(com.apama.exceptions.Exception e) {
-				log "No matching tweets in last minute, unable to fetch valid starting ID" at WARN;
+		// Initialise an LEDController monitor instance for each of the red LEDs on the tree
+		SimpleGPIOTreeLED led;
+		for led in redLEDs {
+			route led;
+		}
+		
+		
+		// Get some tweets - asynchronously!
+		TwitterUtil.getRecentTweets( twitterAuthBearerToken, TWITTER_QUERY, cb_onTweetsResponse, cb_onTweetsHttpError, "" );
+		
+		// So start the tree off with a default message. When each LED ends, it will "ask" for more work
+		for led in redLEDs {
+			route MessageForLED(led.pinId, INITIAL_AND_STARVATION_MSG);
+		}
+		
+		// Now listen for the LED's requesting more work, and send the first item in the queue
+		listenForLEDWorkRequests();
+		
+		// Set up periodic status reporting
+		periodicStatus();
+	} //onload()
+
+	
+	/** Service work requests from each of the LEDs, and maintain the queue of tweets.
+	*/
+	action listenForLEDWorkRequests() {
+		on all RequestMessageForLED() as ledRequestingWork {
+			log "TweetsToLEDs.listenForLEDWorkRequests() #listener "+ledRequestingWork.toString();
+			string message;
+			if (0<queueOfTweets.size()) {
+				message := queueOfTweets[0];
+				queueOfTweets.remove(0);
+				getMoreTweetsIfNeeded();
 			}
-			tr.id := integer.incrementCounter("HTTPClient.requestId");
-		}
-		
-		on all wait(60.0) sendRequest(tr);
-		
-		on all TweetQueryResult() as t {
-			log "Got tweets!" at INFO;
-			dictionary<string, string> tweet := {};
-			for tweet in t.results {
-				string msg := tweet.getOrDefault("text");
-				sinceId := tweet.getOrDefault("id");
-				log msg at INFO;
-				// Strip special chars and numbers
-				string sanitized := msg.replace("(!g)[^A-Za-z]", "");
-				// Send message to LED
-				spawn playMsg(leds[ledCounter], sanitized) to contextsSeq[contextCounter];
-
-				// Increment counters
-				ledCounter := ledCounter + 1;
-				contextCounter := contextCounter + 1;
-				if ledCounter > 23 {
-					ledCounter := 0;
-				}
-				if contextCounter = contextsSeq.size()  {
-					contextCounter := 0;
-				}
+			else {
+				message := INITIAL_AND_STARVATION_MSG;
 			}
-			tr.params["since_id"] := sinceId;
+			route MessageForLED(ledRequestingWork.ledID, message);
+		}
+	} // listenForLEDWorkRequests()
+	
+	
+	
+	action getMoreTweetsIfNeeded() {
+		if (QUEUE_LOW_WATERMARK = queueOfTweets.size()) {
+			// Get some tweets - asynchronously!
+			TwitterUtil.getRecentTweets( twitterAuthBearerToken, TWITTER_QUERY, cb_onTweetsResponse, cb_onTweetsHttpError, twitterLastSeenID );
+		}
+	} // getMoreTweetsIfNeeded()
+	
+	
+	
+	action periodicStatus() {
+		on all wait(5.0) {
+			log "=========== TweetsToLEDs STATUS queueOfTweets="+queueOfTweets.size().toString()+" totalTweetsReceived="+status.totalTweetsReceived.toString()+" totalErrors="+status.totalErrors.toString();
+		}
+	} // periodicStatus()
+	
+
+	action cb_onTweetsResponse(TweetQueryResult tweetQueryResult) {
+//		log "TweetsToLEDs.cb_onTweetsResponse() - got response: "+tweetQueryResult.toString();
+		integer numTweets := tweetQueryResult.results.size();
+		status.totalTweetsReceived:=status.totalTweetsReceived+numTweets;
+		
+		log "TweetsToLEDs.cb_onTweetsResponse() - Number of tweets in response: "+numTweets.toString() at DEBUG;
+		log "TweetsToLEDs.cb_onTweetsResponse() - Metadata in response:         "+tweetQueryResult.meta.toString() at INFO;
+		if (numTweets >0) {
+			// save the returned tweet ID of the first (most recent) result in the sequence in the monitor-scope sinceId to be used in the next request
+			twitterLastSeenID := tweetQueryResult.results[0].getOrDefault("id");
+		}
+		
+		// we want to append the results to our queue keeping oldest at the start (to be 'processed' first) and newest last, so need to reverse the results sequence
+		sequence<dictionary<string, string>> results := tweetQueryResult.results;
+		results.reverse();
+		dictionary<string, string> tweet := {};
+		for tweet in results {
+			// Pull fields out of the data structure 
+			string msg := tweet.getOrDefault("text");
+			string id := tweet.getOrDefault("id"); 
+			string createdAt := tweet.getOrDefault("created_at"); 
+			string sanitized := msg.replace("(!g)[^A-Za-z0-9 ?!,.]", "");
+			log "TweetsToLEDs.cb_onTweetsResponse() - id: "+id+", createdAt: "+createdAt+", sanitized msg: "+sanitized at INFO;
+			queueOfTweets.append(sanitized); // append it to our ordered list
 		}
 
 		
-		on all HTTPError() as err {
-			log "HTTP Error" at WARN;
-			log err.statusCode.toString() at WARN;
-			log err.message at WARN;
+		log "TweetsToLEDs.cb_onTweetsResponse() - Number of queued tweets: "+queueOfTweets.size().toString();
+	} // cb_onTweetsResponse()
+	
+	
+	action cb_onTweetsHttpError() {
+		log "TweetsToLEDs.cb_onTweetsHttpError() - failed to get tweets." at ERROR;
+		status.totalErrors := status.totalErrors + 1;
+	} // cb_onTweetsHttpError()
+	
+	
+	
+} // monitor TweetsToLEDs
+
+
+/** A simple monitor that is spawned once per LED and each monitor instance 
+* controls the morse code transmissions by that LED and requests more owrk when needed.
+*/
+monitor LEDController {
+	SimpleGPIOTreeLED myLED;
+	
+	action onload() {
+		log "LEDController.onload()";
+		
+		on all SimpleGPIOTreeLED() as myLED {spawn setup();}
+	} // onload()
+	
+	action setup() {
+		log "LEDController.setup() spawned for LED: "+myLED.toString();
+		on all MessageForLED(ledID=myLED.pinId) as msg {
+			log "RequestMessageForLED#listener MessageForLED("+myLED.pinId.toString()+")";
+			integer timeToTransmit_ms := MorseCodeUtil.transmitMorseStringArrayWithTimers( MorseCodeUtil.stringToMorseStringArray(msg.messageText+" "), myLED.setOn, myLED.setOff, 200 );
+			on wait(timeToTransmit_ms.toFloat()/1000.0) {
+				log "RequestMessageForLED#listener - finished message - routing RequestMessageForLED("+myLED.pinId.toString()+")";
+				route RequestMessageForLED(myLED.pinId);
+			}
 		}
-		
-		
-		log "Loaded monitor TweetsToLEDs" at INFO;
-		
-	}
-}
+	} // setup()
+	
+} // monitor LEDController
+
