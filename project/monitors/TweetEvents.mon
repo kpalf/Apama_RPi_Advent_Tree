@@ -1,7 +1,6 @@
 package com.apamax.twitter;
 
 /** Event for making requests to the Twitter API  */
-
 event TweetRequest {
 	integer id;
 	string bearerToken;
@@ -10,15 +9,24 @@ event TweetRequest {
 }
 
 /** Event for handling response from Twitter API */
-
 event TweetQueryResult {
 	sequence<dictionary<string, string>> results;
 	dictionary<string, string> meta;
 }
 
 /** Event for handling http errors */
-
 event HTTPError {
 	integer statusCode;
 	string message;
+}
+
+/** Event for sending a single message to an LED Controller to be transmitted - a job/work. */
+event MessageForLED {
+	integer ledID;
+	string messageText;
+}
+
+/** Event for requesting more work for a given LED Controller. */
+event RequestMessageForLED {
+	integer ledID;
 }
