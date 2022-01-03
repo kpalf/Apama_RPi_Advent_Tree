@@ -1,0 +1,260 @@
+package kpalf.demo.morse;
+
+
+/** This event is a simple utility event for helping with Morse Code.
+ * 
+ *  It is utility event type with static actions that can be used to: 
+ *  a) convert a message to morse representation, and 
+ *  b) transmit a morse representation of a message by invoking user-supplied callbacks for signal ON/OFF.
+ *
+ *  The goal is to be able to "transmit" Morse Code in a non-blocking way by using EPL timers.  
+ *  If we were looking at intervals <100ms then I don't think timers would work well, but for time resolutions visible to human we should be OK.
+ *
+ * TimeUnits for each element based on this article: https://en.wikipedia.org/wiki/Morse_code#Representation,_timing,_and_speeds).
+ * 
+ * Original repo: https://github.com/kpalf/Apama_EPLMorse 
+ */
+event MorseCodeUtil {
+
+	constant integer TIME_UNITS_DOT := 1;
+	constant integer TIME_UNITS_DASH := 3;
+	constant integer TIME_UNITS_ELEMENT_GAP := 1;
+	constant integer TIME_UNITS_CHARACTER_GAP := 3;
+	constant integer TIME_UNITS_WORD_GAP := 4; // after a character gap (3+4 = 7)
+	
+	/** Minimum period permitted for a single "time unit" in milliseconds (default 100ms). */
+	constant integer MIN_TIME_UNIT_MS := 100;  // Minimum 100ms
+	
+	constant float TIME_OFFSET_MESSAGE_START_SECS := 1.0;
+	
+	
+	/** Given an input string, convert to a sequence strings, each representing a Morse code encoding of the characters.
+	* Any character in the input string that does not have a valid morse representation is skipped, except for the space character (' ') which is passed directly as element of the output sequence.
+	*/
+	static action stringToMorseStringArray(string input) returns sequence<string> {
+		sequence<string> result := new sequence<string>;
+		
+		/** Fixed lookup dictionary. 
+		*  Space (' '), 26 Latin characters ('A'-'Z'), 10 numbers ('0'-'9'), 18 standardized punctuation ('.', ',', '?', '\'', '!', '/', '(', ')', '&', ':', ';', '=', '+', '-', '_', '\"', '$', '@')
+		*  Notably, the punvtuation includes 3 unofficial but commonly used characters, '!', '$', '&', and the 2004 addition on '@'.
+		*/
+		dictionary<string,string> morseCode := {
+			" ":" ", 
+			"A":".-", 
+			"B":"-...", 
+			"C":"-.-.", 
+			"D":"-..", 
+			"E":".", 
+			"F":"..-.", 
+			"G":"--.", 
+			"H":"....", 
+			"I":"..", 
+			"J":".---", 
+			"K":"-.-", 
+			"L":".-..", 
+			"M":"--", 
+			"N":"-.", 
+			"O":"---", 
+			"P":".--.", 
+			"Q":"--.-", 
+			"R":".-.", 
+			"S":"...", 
+			"T":"-", 
+			"U":"..-", 
+			"V":"...-", 
+			"W":".--", 
+			"X":"-..-", 
+			"Y":"-.--", 
+			"Z":"--..",
+			"0":"-----",
+			"1":".----",
+			"2":"..---",
+			"3":"...--",
+			"4":"....-",
+			"5":".....",
+			"6":"-....",
+			"7":"--...",
+			"8":"---..",
+			"9":"----.",
+			".":".-.-.-",
+			",":"--..--",
+			"?":"--..--",
+			"'":".----.",
+			"!":"-.-.--", // unofficial
+			"/":"-..-.",
+			"(":"-.--.",
+			")":"-.--.-",
+			"&":".-...",  // unofficial
+			":":"---...",
+			";":"-.-.-.",
+			"=":"-...-",
+			"+":".-.-.",
+			"-":"-....-",
+			"_":"..--.-",
+			"\"":".-..-.",
+			"$":"...-..-",  // unofficial
+			"@":".--.-." // added by ITU in 2004
+					
+			};
+
+		integer i := 0;
+		string upperInput := input.toUpper();
+
+		while (i < input.length()) {
+			string thisChar := upperInput.substring(i, i+1);
+			
+			//Lookup morseCode strings representations - anything not found will result in empty string ""
+			string morseCharRep := morseCode.getOrDefault(thisChar);
+			if ""!=morseCharRep then {
+				// add all valid results to the result sequence
+				result.append(morseCharRep);
+			}
+			
+			i:=i+1;
+		}
+		
+		//log "MorseCodeUtil.stringToMorseStringArray(): Input length "+input.length().toString()+", result length "+result.size().toString() at INFO;
+		return result;
+		
+	} // stringToMorseStringArray()
+	
+	
+	
+	
+	/** Transmit the encoded message by invoking the supplied callbacks using EPL timers.
+	* Note that there will be no trailing gaps at the end of the message unless the message explicitly ends with a space (' ').
+	* 
+	* @param morseStringArray The message to be transmitted, encoded as a sequence of strings, generally as a result of using the action stringToMorseStringArray().
+	* @param actionSignalOn User supplied callback action to turn on some signal (eg turn on an LED).
+	* @param actionSignalOff User supplied callback action to turn off some signal (eg turn off an LED).
+	* @param timeUnitMS Number of milliseconds per "timeUnit" - if the value is less than MIN_TIME_UNIT_MS then the parameter is ignored and the value of MIN_TIME_UNIT_MS is used instead.
+	* 
+	* @returns total time in milliseconds to transmit the sequence.
+	*/
+	static action transmitMorseStringArrayWithTimers( sequence<string> morseStringArray, action<> actionSignalOn, action<> actionSignalOff, integer timeUnitMS ) returns integer {
+		// check input params
+		if (0 = morseStringArray.size()) then {
+			log "Input parameter morseStringArray has no elements - exiting early" at DEBUG;
+			return 0;
+		}
+		if (MIN_TIME_UNIT_MS > timeUnitMS) then {
+			log "Value of input parameter timeUnitMS was less than the minimum, so will use the minimum "+MIN_TIME_UNIT_MS.toString()+"ms." at WARN;
+			timeUnitMS := MIN_TIME_UNIT_MS;
+		}
+		
+		float startTimeSecs := currentTime + TIME_OFFSET_MESSAGE_START_SECS;
+		log "Message start time (secs since epoch): "+startTimeSecs.toString() at DEBUG;
+		
+		
+		// Pre-compute the time units
+		integer TIME_DOT_MS :=           timeUnitMS * TIME_UNITS_DOT;
+		integer TIME_DASH_MS :=          timeUnitMS * TIME_UNITS_DASH;
+		integer TIME_ELEMENT_GAP_MS :=   timeUnitMS * TIME_UNITS_ELEMENT_GAP;
+		integer TIME_CHARACTER_GAP_MS := timeUnitMS * TIME_UNITS_CHARACTER_GAP;
+		integer TIME_WORD_GAP_MS :=      timeUnitMS * TIME_UNITS_WORD_GAP;
+		
+		
+		
+		integer timeDeltaMillis := 0;
+		
+		string morseChar;
+		integer msgCharIndex := 0;
+		integer msgLength := morseStringArray.size();
+		//for morseChar in morseStringArray {
+		while msgCharIndex < msgLength {
+			morseChar := morseStringArray[msgCharIndex];
+			// 1: Deal with individual sequence element, a single morse 'character' (which may be an interword space, or a set of dots and dashes)
+			log "Character: \""+morseChar+"\"" at DEBUG;
+			
+			if " "!=morseChar then {
+				integer elementIndex := 0;
+				while (elementIndex < morseChar.length()){
+					//call morseDash or morseDot 
+					string singleMorseElement := morseChar.substring(elementIndex, elementIndex+1);
+					if (singleMorseElement != ""){
+						if (singleMorseElement = "."){
+							log "DOT "+TIME_UNITS_DOT.toString() at DEBUG;
+							// turn signal ON for TIME_UNITS_DOT (1) then OFF again
+							addTimedSignalOn( timeDeltaMillis.toFloat()/1000.0, actionSignalOn );
+							
+							timeDeltaMillis := timeDeltaMillis + TIME_DOT_MS;
+							addTimedSignalOff( timeDeltaMillis.toFloat()/1000.0, actionSignalOff );
+														
+						}
+						else if (singleMorseElement = "-"){
+							log "DASH "+TIME_UNITS_DASH.toString() at DEBUG;
+							//turn signal ON for TIME_UNITS_DASH (3) then OFF again
+							addTimedSignalOn( timeDeltaMillis.toFloat()/1000.0, actionSignalOn );
+							
+							timeDeltaMillis := timeDeltaMillis + TIME_DASH_MS;
+							addTimedSignalOff( timeDeltaMillis.toFloat()/1000.0, actionSignalOff );
+						}
+					}
+					elementIndex:=elementIndex+1; 
+					if (elementIndex < morseChar.length()) { // only add an inter-element delay if not at the end of the morseChar string
+						// Inter element delay for TIME_UNITS_ELEMENT_GAP (1) time unit
+						log "ELEMENT_GAP "+TIME_UNITS_ELEMENT_GAP.toString() at DEBUG;
+						timeDeltaMillis := timeDeltaMillis + TIME_ELEMENT_GAP_MS;
+					}
+				}
+				
+				if (msgCharIndex != msgLength-1) { // only add an inter-character delay if not at the end of the entire message
+					// 2: Add a standard gap after each 'character' of the sequence - using TIME_UNITS_CHARACTER_GAP
+					log "CHARACTER_GAP "+TIME_UNITS_CHARACTER_GAP.toString() at DEBUG;
+					timeDeltaMillis := timeDeltaMillis + TIME_CHARACTER_GAP_MS;
+				}
+			}
+			else { // it is a space (' ')
+				// 3: A standard inter-word gap using TIME_UNITS_WORD_GAP
+				log "WORD_GAP "+TIME_UNITS_WORD_GAP.toString() at DEBUG;
+				timeDeltaMillis := timeDeltaMillis + TIME_WORD_GAP_MS;
+			}
+			
+			msgCharIndex:=msgCharIndex+1;
+		} // while
+		
+		DEBUG_addTimedEndofMessage(timeDeltaMillis.toFloat()/1000.0);
+		
+		return timeDeltaMillis;
+	} // transmitMorseStringArrayWithTimers()
+	
+	
+	
+	static action addTimedSignalOn(float absoluteTimeSeconds, action<> signalOn) {
+		log "addTimedSignalOn( "+absoluteTimeSeconds.toString()+" ) setting up listener..." at DEBUG;
+		
+		on wait(absoluteTimeSeconds) {
+			log "addTimedSignalOn()#wait_listener  : invoking signalOn  @ " + currentTime.toString() at DEBUG;
+			// invoke the signalOn action
+			signalOn();
+		}
+	} //addTimedSignalOn()
+	
+	
+	static action addTimedSignalOff(float absoluteTimeSeconds, action<> signalOff) {
+		log "addTimedSignalOff( "+absoluteTimeSeconds.toString()+" ) setting up listener..." at DEBUG;
+
+		on wait(absoluteTimeSeconds) {
+			log "addTimedSignalOff()#wait_listener : invoking signalOff @ " + currentTime.toString() at DEBUG;
+			// invoke the signalOff action
+			signalOff();
+		}
+	} // addTimedSignalOff()
+	
+	
+	static action DEBUG_addTimedEndofMessage(float absoluteTimeSeconds) {
+		log "DEBUG_addTimedEndofMessage( "+absoluteTimeSeconds.toString()+" ) setting up listener..." at DEBUG;
+
+		on wait(absoluteTimeSeconds) {
+			log "DEBUG_addTimedEndofMessage()#wait_listener : triggered @ " + currentTime.toString() at DEBUG;
+		}
+	} // DEBUG_addTimedEndofMessage()
+	
+
+	
+	
+} // event MorseCodeUtil
+
+
+
+
