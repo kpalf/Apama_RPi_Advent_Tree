@@ -5,8 +5,10 @@ event TwitterUtil {
 	
 	/** Name of the OS environment valiable that should contain the users bearer token for the Twitter API. */
 	constant string TWITTER_BEARER_TOKEN_ENV_VAR := "BEARER_TOKEN";
-	/** Name of the channel to which a monitor must subscribe for positive responses to HTTP requests. */
+	/** @private Name of the channel to which the utility must send HTTP requests. */
 	constant string CHANNEL_HTTPCLIENT_REQUEST := "httpRequest";
+	/** Name of the channel to which a monitor must subscribe for positive responses to HTTP requests. */
+	constant string CHANNEL_HTTPCLIENT_TWITTER_RESPONSE := "twitter";
 	/** Name of the channel to which a monitor must subscribe for error responses to HTTP requests. */
 	constant string CHANNEL_HTTPCLIENT_ERRORS := "httperrors";
 	
@@ -54,7 +56,7 @@ event TwitterUtil {
 		if (0!= optionalSinceLastSeenId.length()) {
 			params.add( "since_id", optionalSinceLastSeenId );
 		}
-		log "doRegularTwitterRequest() - params="+params.toString() at DEBUG;
+		log "getRecentTweets() - params="+params.toString() at INFO;
 		
 		TweetRequest tr := new TweetRequest;
 		tr.bearerToken := "Bearer "+twitterAuthBearerToken;
@@ -71,7 +73,7 @@ event TwitterUtil {
 	/** Utility to sucbscribe to the necessary channels for receiving responses and errors - should be used one before the first call to @see getRecentTweets().
 	*/
 	static action subscribeToResponseChannels() {
-		monitor.subscribe(CHANNEL_HTTPCLIENT_REQUEST);
+		monitor.subscribe(CHANNEL_HTTPCLIENT_TWITTER_RESPONSE);
 		monitor.subscribe(CHANNEL_HTTPCLIENT_ERRORS);
 	}
 	
